@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#080c10" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="APEX" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="description" content="APEX — AI-powered day trading analyst" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <title>APEX Trader</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@400;500;600&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #080c10;
+      --green: #00ff88;
+      --blue: #00b4ff;
+      --surface: rgba(255,255,255,0.03);
+      --border: rgba(255,255,255,0.07);
+      --text: #e0e0e0;
+      --muted: #90a4ae;
+      --dim: #546e7a;
+      --mono: 'Space Mono', monospace;
+      --sans: 'DM Sans', sans-serif;
+    }
+
+    html, body { height: 100%; overflow: hidden; background: var(--bg); }
+
+    body {
+      font-family: var(--sans);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100dvh;
+    }
+
+    /* Grid background */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(0,255,136,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,255,136,0.025) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── HEADER ── */
+    header {
+      position: relative; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px;
+      height: 60px;
+      background: rgba(8,12,16,0.97);
+      border-bottom: 1px solid rgba(0,255,136,0.12);
+      backdrop-filter: blur(20px);
+      flex-shrink: 0;
+    }
+
+    .logo { display: flex; align-items: center; gap: 10px; }
+    .logo-icon {
+      width: 36px; height: 36px; border-radius: 9px;
+      background: linear-gradient(135deg, rgba(0,255,136,0.2), rgba(0,180,255,0.1));
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; border: 1px solid rgba(0,255,136,0.2);
+    }
+    .logo-name { font-family: var(--mono); font-size: 20px; font-weight: 700; color: #fff; letter-spacing: .15em; }
+    .logo-sub { font-family: var(--mono); font-size: 8px; color: var(--green); letter-spacing: .2em; }
+
+    .live-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-family: var(--mono); font-size: 10px; color: var(--green); letter-spacing: .15em;
+    }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green); box-shadow: 0 0 8px var(--green);
+      animation: blink 1.5s ease-in-out infinite;
+    }
+
+    /* ── MAIN AREA ── */
+    main {
+      flex: 1; overflow: hidden;
+      display: flex; flex-direction: column;
+      position: relative; z-index: 1;
+    }
+
+    /* ── WELCOME ── */
+    #welcome {
+      flex: 1; overflow-y: auto;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 32px 20px; gap: 0;
+      text-align: center;
+    }
+    #welcome h1 {
+      font-family: var(--mono); font-size: clamp(30px, 8vw, 44px);
+      font-weight: 700; letter-spacing: .05em; line-height: 1.1;
+      color: #fff; margin-bottom: 10px;
+    }
+    #welcome h1 span { color: var(--green); }
+    #welcome p {
+      color: var(--dim); font-size: 14px; line-height: 1.7;
+      max-width: 320px; margin-bottom: 32px;
+    }
+    .chips {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 8px; width: 100%; max-width: 480px;
+    }
+    .chip {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px 14px;
+      color: var(--muted); font-size: 12px; font-family: var(--sans);
+      cursor: pointer; text-align: left; line-height: 1.4;
+      transition: all .2s ease;
+    }
+    .chip:active { background: rgba(0,255,136,0.08); border-color: rgba(0,255,136,0.25); color: var(--text); }
+    .disclaimer {
+      margin-top: 28px; color: #263238; font-size: 10px; max-width: 300px; line-height: 1.5;
+    }
+
+    /* ── MESSAGES ── */
+    #messages {
+      flex: 1; overflow-y: auto;
+      padding: 16px; display: flex; flex-direction: column; gap: 14px;
+      scroll-behavior: smooth;
+    }
+    #messages::-webkit-scrollbar { width: 3px; }
+    #messages::-webkit-scrollbar-thumb { background: rgba(0,255,136,0.15); border-radius: 3px; }
+
+    .msg-user {
+      align-self: flex-end;
+      background: rgba(0,255,136,0.08);
+      border: 1px solid rgba(0,255,136,0.18);
+      border-radius: 16px 16px 4px 16px;
+      padding: 12px 16px; max-width: 78%;
+      font-size: 14px; color: var(--text); line-height: 1.6;
+    }
+
+    .msg-ai {
+      align-self: flex-start;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px 16px 16px 16px;
+      padding: 14px 16px; width: 100%; max-width: 100%;
+    }
+    .msg-ai-header {
+      display: flex; align-items: center; gap: 8px;
+      padding-bottom: 10px; margin-bottom: 10px;
+      border-bottom: 1px solid rgba(0,255,136,0.08);
+    }
+    .ai-badge {
+      font-family: var(--mono); font-size: 9px; color: var(--green);
+      letter-spacing: .12em; background: rgba(0,255,136,0.07);
+      border: 1px solid rgba(0,255,136,0.18); border-radius: 4px;
+      padding: 2px 7px;
+    }
+    .ai-status { font-family: var(--mono); font-size: 9px; color: #2a3f47; letter-spacing: .1em; }
+
+    /* Formatted AI content */
+    .ai-content { display: flex; flex-direction: column; gap: 2px; }
+    .ai-section-header {
+      font-family: var(--mono); font-size: 10px; color: var(--green);
+      letter-spacing: .15em; margin-top: 12px; margin-bottom: 3px;
+    }
+    .ai-section-header:first-child { margin-top: 0; }
+    .ai-bullet { display: flex; gap: 8px; margin-bottom: 2px; }
+    .ai-bullet-dot { color: var(--green); font-size: 13px; flex-shrink: 0; line-height: 1.6; }
+    .ai-bullet-text { color: var(--muted); font-size: 13px; line-height: 1.65; }
+    .ai-body { color: var(--muted); font-size: 13px; line-height: 1.7; }
+
+    /* Typing indicator */
+    .typing { display: flex; gap: 5px; align-items: center; padding: 4px 0; }
+    .typing span {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    .typing span:nth-child(2) { animation-delay: .2s; }
+    .typing span:nth-child(3) { animation-delay: .4s; }
+
+    /* ── INPUT BAR ── */
+    #input-bar {
+      flex-shrink: 0;
+      background: rgba(8,12,16,0.97);
+      border-top: 1px solid rgba(255,255,255,0.06);
+      padding: 12px 16px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      backdrop-filter: blur(20px);
+      position: relative; z-index: 10;
+    }
+    .input-row { display: flex; gap: 10px; align-items: flex-end; }
+    .input-wrap {
+      flex: 1; background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 14px; padding: 0 14px;
+      transition: border-color .2s;
+    }
+    .input-wrap:focus-within { border-color: rgba(0,255,136,0.3); }
+    #user-input {
+      width: 100%; background: transparent; border: none; outline: none;
+      color: var(--text); font-size: 14px; font-family: var(--sans);
+      padding: 13px 0; resize: none; max-height: 100px;
+      line-height: 1.5;
+    }
+    #user-input::placeholder { color: #2e4550; }
+
+    #send-btn {
+      width: 46px; height: 46px; border-radius: 12px; border: none;
+      background: linear-gradient(135deg, var(--green), #00c97a);
+      color: #080c10; font-size: 20px; font-weight: 700;
+      cursor: pointer; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      transition: all .2s ease;
+    }
+    #send-btn:disabled { background: rgba(0,255,136,0.12); color: #2e4550; cursor: not-allowed; }
+    #send-btn:not(:disabled):active { transform: scale(0.94); }
+
+    .footer-note {
+      text-align: center; margin-top: 8px;
+      font-family: var(--mono); font-size: 9px;
+      color: #1c2e35; letter-spacing: .08em;
+    }
+
+    /* ── INSTALL BANNER ── */
+    #install-banner {
+      display: none;
+      position: fixed; bottom: 80px; left: 16px; right: 16px;
+      background: rgba(0,255,136,0.08); border: 1px solid rgba(0,255,136,0.25);
+      border-radius: 14px; padding: 14px 16px;
+      z-index: 100; align-items: center; gap: 12px;
+    }
+    #install-banner.show { display: flex; }
+    #install-banner p { flex: 1; font-size: 13px; color: var(--text); line-height: 1.4; }
+    #install-banner p span { color: var(--green); font-weight: 600; }
+    #install-btn {
+      background: var(--green); color: #080c10; border: none;
+      border-radius: 8px; padding: 8px 14px; font-size: 12px;
+      font-weight: 600; font-family: var(--sans); cursor: pointer; white-space: nowrap;
+    }
+    #dismiss-btn {
+      background: none; border: none; color: var(--dim);
+      font-size: 18px; cursor: pointer; padding: 0 4px;
+    }
+
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+    @keyframes pulse { 0%,100%{transform:scale(1);opacity:.4} 50%{transform:scale(1.35);opacity:1} }
+    @keyframes fadeUp { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+    .msg-user, .msg-ai { animation: fadeUp .25s ease; }
+
+    /* hide welcome / messages as needed */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon">📈</div>
+      <div>
+        <div class="logo-name">APEX</div>
+        <div class="logo-sub">TRADING INTELLIGENCE</div>
+      </div>
+    </div>
+    <div class="live-badge">
+      <div class="live-dot"></div>
+      LIVE
+    </div>
+  </header>
+
+  <!-- MAIN -->
+  <main>
+    <!-- Welcome Screen -->
+    <div id="welcome">
+      <h1>Meet <span>APEX</span></h1>
+      <p>Your AI-powered day trading analyst. Ask about any stock, crypto, or setup.</p>
+      <div class="chips">
+        <button class="chip" onclick="quickSend(this)">📊 Analyze NVDA for a day trade</button>
+        <button class="chip" onclick="quickSend(this)">🎯 TSLA support &amp; resistance</button>
+        <button class="chip" onclick="quickSend(this)">₿ BTC setup next 4 hours</button>
+        <button class="chip" onclick="quickSend(this)">📈 SPY scalping strategy</button>
+        <button class="chip" onclick="quickSend(this)">📉 AMD breakout or breakdown?</button>
+        <button class="chip" onclick="quickSend(this)">💡 How to use VWAP</button>
+      </div>
+      <p class="disclaimer">⚠️ For informational purposes only. Not financial advice. Day trading involves substantial risk of loss.</p>
+    </div>
+
+    <!-- Chat Messages -->
+    <div id="messages" class="hidden"></div>
+  </main>
+
+  <!-- INPUT BAR -->
+  <div id="input-bar">
+    <div class="input-row">
+      <div class="input-wrap">
+        <textarea id="user-input" rows="1" placeholder="Ask about any stock or setup..."></textarea>
+      </div>
+      <button id="send-btn" disabled onclick="sendMessage()">&#x2192;</button>
+    </div>
+    <div class="footer-note hidden" id="footer-note">NOT FINANCIAL ADVICE · INFORMATIONAL USE ONLY</div>
+  </div>
+
+  <!-- INSTALL BANNER -->
+  <div id="install-banner">
+    <p>📲 Add <span>APEX</span> to your home screen for instant access</p>
+    <button id="install-btn" onclick="installApp()">Install</button>
+    <button id="dismiss-btn" onclick="dismissBanner()">✕</button>
+  </div>
+
+  <script>
+    // ── CONFIG ──────────────────────────────────────────────
+    // API key is stored securely on the server — do NOT put it here
+
+    const SYSTEM_PROMPT = `You are APEX — an elite AI day trading analyst with deep expertise in technical analysis, market microstructure, and price action.
+
+When a user asks about a stock, crypto, or asset, provide:
+
+📊 TECHNICAL ANALYSIS
+- Key support & resistance levels (specific prices)
+- Trend direction (intraday, short-term)
+- Key indicators: RSI, MACD, moving averages (50/200 EMA), volume patterns
+
+🎯 TRADE SETUP
+- Bias: BULLISH / BEARISH / NEUTRAL
+- Entry zone (specific price range)
+- Stop loss level
+- Price targets (T1, T2, T3)
+- Risk/Reward ratio
+
+⚠️ RISK FACTORS
+- Key risks to the trade
+- Important levels to watch
+- Upcoming catalysts
+
+📈 MOMENTUM SIGNALS
+- Short-term momentum reading
+- Volume confirmation
+- Any divergences
+
+Be sharp, specific, and actionable. Use exact prices when possible. Markets are probabilistic — never guarantee outcomes.`;
+
+    // ── STATE ───────────────────────────────────────────────
+    let messages = [];
+    let loading = false;
+    let deferredPrompt = null;
+
+    // ── DOM REFS ────────────────────────────────────────────
+    const welcome   = document.getElementById('welcome');
+    const msgList   = document.getElementById('messages');
+    const inputEl   = document.getElementById('user-input');
+    const sendBtn   = document.getElementById('send-btn');
+    const footerNote = document.getElementById('footer-note');
+
+    // ── INPUT HANDLING ──────────────────────────────────────
+    inputEl.addEventListener('input', () => {
+      sendBtn.disabled = !inputEl.value.trim() || loading;
+      inputEl.style.height = 'auto';
+      inputEl.style.height = Math.min(inputEl.scrollHeight, 100) + 'px';
+    });
+
+    inputEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+    });
+
+    function quickSend(btn) { sendMessage(btn.textContent.trim()); }
+
+    // ── SEND MESSAGE ─────────────────────────────────────────
+    async function sendMessage(text) {
+      const userText = text || inputEl.value.trim();
+      if (!userText || loading) return;
+
+      // Switch to chat view
+      welcome.classList.add('hidden');
+      msgList.classList.remove('hidden');
+      footerNote.classList.remove('hidden');
+      inputEl.value = '';
+      inputEl.style.height = 'auto';
+      sendBtn.disabled = true;
+
+      messages.push({ role: 'user', content: userText });
+      appendUserMsg(userText);
+
+      loading = true;
+      const typingEl = appendTyping();
+      scrollBottom();
+
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1000,
+            system: SYSTEM_PROMPT,
+            messages,
+          }),
+        });
+
+        const data = await res.json();
+        const reply = (data.content || []).map(b => b.text || '').join('\n').trim()
+          || '⚠️ No response received. Please try again.';
+
+        messages.push({ role: 'assistant', content: reply });
+        typingEl.remove();
+        appendAIMsg(reply);
+      } catch {
+        typingEl.remove();
+        appendAIMsg('⚠️ Network error. Please check your connection and try again.');
+      } finally {
+        loading = false;
+        sendBtn.disabled = !inputEl.value.trim();
+        scrollBottom();
+      }
+    }
+
+    // ── RENDER HELPERS ───────────────────────────────────────
+    function appendUserMsg(text) {
+      const el = document.createElement('div');
+      el.className = 'msg-user';
+      el.textContent = text;
+      msgList.appendChild(el);
+      scrollBottom();
+    }
+
+    function appendTyping() {
+      const el = document.createElement('div');
+      el.className = 'msg-ai';
+      el.innerHTML = `
+        <div class="msg-ai-header">
+          <span class="ai-badge">APEX ANALYSIS</span>
+          <span class="ai-status">ANALYZING...</span>
+        </div>
+        <div class="typing"><span></span><span></span><span></span></div>`;
+      msgList.appendChild(el);
+      return el;
+    }
+
+    function appendAIMsg(text) {
+      const el = document.createElement('div');
+      el.className = 'msg-ai';
+
+      const header = `
+        <div class="msg-ai-header">
+          <span class="ai-badge">APEX ANALYSIS</span>
+        </div>`;
+
+      const content = document.createElement('div');
+      content.className = 'ai-content';
+
+      text.split('\n').forEach(line => {
+        if (!line.trim()) { const sp = document.createElement('div'); sp.style.height='5px'; content.appendChild(sp); return; }
+
+        const isHeader = /^[📊🎯⚠️📈💡🔴🟢]/.test(line);
+        if (isHeader) {
+          const h = document.createElement('div');
+          h.className = 'ai-section-header';
+          h.textContent = line.replace(/\*\*/g, '');
+          content.appendChild(h); return;
+        }
+        if (line.trim().startsWith('- ') || line.trim().startsWith('• ')) {
+          const row = document.createElement('div'); row.className = 'ai-bullet';
+          const dot = document.createElement('span'); dot.className = 'ai-bullet-dot'; dot.textContent = '›';
+          const txt = document.createElement('span'); txt.className = 'ai-bullet-text';
+          txt.textContent = line.trim().slice(2).replace(/\*\*(.*?)\*\*/g, '$1');
+          row.appendChild(dot); row.appendChild(txt); content.appendChild(row); return;
+        }
+        const p = document.createElement('div'); p.className = 'ai-body';
+        p.textContent = line.replace(/\*\*(.*?)\*\*/g, '$1');
+        content.appendChild(p);
+      });
+
+      el.innerHTML = header;
+      el.appendChild(content);
+      msgList.appendChild(el);
+      scrollBottom();
+    }
+
+    function scrollBottom() {
+      setTimeout(() => msgList.scrollTop = msgList.scrollHeight, 80);
+    }
+
+    // ── PWA INSTALL ──────────────────────────────────────────
+    window.addEventListener('beforeinstallprompt', e => {
+      e.preventDefault();
+      deferredPrompt = e;
+      setTimeout(() => document.getElementById('install-banner').classList.add('show'), 2000);
+    });
+
+    function installApp() {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(() => { deferredPrompt = null; dismissBanner(); });
+    }
+
+    function dismissBanner() {
+      document.getElementById('install-banner').classList.remove('show');
+    }
+
+    // ── SERVICE WORKER ───────────────────────────────────────
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    }
+  </script>
+</body>
+</html>
