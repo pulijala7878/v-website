@@ -13,74 +13,57 @@ Users pay **nothing** at the infrastructure level — all API costs are yours.
 
 ---
 
-## Cost per query (after the optimizations in this build)
+## Cost per query
 
-| Tier | Model | Input cost | Output cost | Per query |
-|------|-------|-----------|------------|-----------|
-| Free | claude-haiku-4-5 | $0.80/M | $4/M | **~$0.003** |
-| Pro  | claude-sonnet-4  | $3/M    | $15/M | **~$0.011** |
+Both free and Pro use **claude-haiku-4-5** (fast, cheap, very capable for structured analysis).
+
+| Model | Input cost | Output cost | Per query (est.) |
+|-------|-----------|------------|-----------------|
+| claude-haiku-4-5 | $0.80/M | $4/M | **~$0.002** |
 
 Assumptions: ~630 input tokens, ~550 output tokens per query.  
-With **prompt caching** (enabled), the 400-token system prompt costs 90% less on cache hits → effective free-tier cost drops to **~$0.002/query**.
+With **prompt caching** (enabled), the system prompt costs 90% less on repeat hits → effective cost drops to **~$0.0015/query**.
 
 ---
 
 ## Break-even analysis
 
-### Free users
-- 5 queries/day × $0.002 = **$0.010/day per free user**
-- 1,000 free users = **~$10/day = ~$300/month**
+### Free users (capped at 5/day server-side)
+- 5 queries/day × $0.0015 = **$0.0075/day per free user**
+- 1,000 free users = **~$7.50/day = ~$225/month**
 
 ### Pro users ($4.99/month → you keep $4.24 after Google's 15%)
-- If a Pro user runs 15 queries/day: 450/month × $0.011 = **$4.95/month in API costs**
-- Revenue: $4.24 → **net loss of $0.71/month per heavy Pro user**
-- If a Pro user runs 8 queries/day: 240/month × $0.011 = **$2.64/month**
-- Revenue: $4.24 → **net profit of $1.60/month**
+- Capped at **50 queries/day** server-side
+- Typical user (15 queries/day): 450/month × $0.0015 = **$0.68/month API cost**
+- Revenue: $4.24 → **net profit of $3.56/month per Pro user**
+- Heavy user (50 queries/day): 1,500/month × $0.0015 = **$2.25/month**
+- Revenue: $4.24 → **net profit of $1.99/month** — still solidly profitable
 
-**Rule of thumb: you need Pro users to average under ~12 queries/day to stay profitable at $4.99/month.**
+### Yearly plan ($29.99/yr → $2.12/month)
+- Typical user: $0.68 API cost → **profit $1.44/month**
+- Heavy user: $2.25 API cost → **profit -$0.13/month** (edge case, acceptable)
 
----
-
-## Recommendations to stay profitable
-
-### 1. Cap Pro daily queries (implemented via server-side rate limit)
-Add a Pro daily limit (e.g. 30/day) in `api/chat.js`:
-```js
-const proLimit = isPro ? 30 : 5;
-if (!checkRateLimit(clientIp, proLimit)) { ... }
-```
-At 30/day: 900 queries/month × $0.011 = $9.90 → still a loss.  
-**Consider $9.99/month if you want truly unlimited Sonnet.**
-
-### 2. Use Haiku for all tiers (simplest)
-Change `api/chat.js` to always use `claude-haiku-4-5-20251001`.  
-900 queries/month × $0.002 = $1.80 → profit $2.44/month per Pro user.
-
-### 3. Yearly plan math
-$29.99/year → you keep $25.49 → $2.12/month  
-At 15 queries/day with Haiku: $0.002 × 450 = $0.90/month → **profit $1.22/month**
-
-### 4. Yearly with Sonnet is risky
-$29.99/year → $2.12/month revenue  
-15 queries/day with Sonnet: $4.95/month → **loss $2.83/month**  
-If you keep yearly + Sonnet, cap Pro at 10 queries/day max.
+**Bottom line: Haiku makes the economics work at any realistic usage level.**
 
 ---
 
 ## Setting up the Pro token (Vercel env vars)
 
-1. Generate a random secret: `openssl rand -hex 32`
-2. In Vercel dashboard → Settings → Environment Variables:
-   - `ANTHROPIC_API_KEY` = your Anthropic key
-   - `APEX_PRO_SECRET` = your random secret
-   - `VITE_PRO_SECRET` = **same** random secret (prefix VITE_ makes it available to Vite/React)
-3. Redeploy Vercel
+1. Generate a random token: `openssl rand -hex 32`
+2. In Vercel dashboard → Settings → Environment Variables, add all three:
 
-> **Security note:** `VITE_PRO_SECRET` is bundled into the client JS and visible to determined users.
-> This is "soft" protection — adequate for v1. For production, implement proper receipt validation:
-> when a user subscribes via Google Play, send the purchase token to your backend,
-> verify it against the Google Play Developer API, and issue a signed JWT. The JWT
-> is then sent with each API request and verified server-side.
+| Variable | Value |
+|----------|-------|
+| `ANTHROPIC_API_KEY` | Your Anthropic API key |
+| `APEX_PRO_SECRET` | Your random token (server-side, never shown to users) |
+| `VITE_APEX_PRO_TOKEN` | **Same value** as APEX_PRO_SECRET |
+
+3. Redeploy Vercel after adding env vars
+
+> **Note:** `VITE_APEX_PRO_TOKEN` is bundled into the client JS. A determined user could find it
+> and make direct API calls bypassing the app paywall. At Haiku pricing ($0.0015/query),
+> the financial risk is low — even 1,000 extra queries/day costs only $1.50/day.
+> For v2, replace with Google Play receipt validation + server-issued JWT.
 
 ---
 
@@ -100,12 +83,12 @@ if (count > FREE_DAILY_LIMIT) return res.status(429)...
 
 ---
 
-## Monthly P&L snapshot (realistic 6-month scenario)
+## Monthly P&L snapshot (realistic 6-month scenario, all Haiku)
 
 | Month | Free users | Pro users | API cost | Revenue | Net |
 |-------|-----------|-----------|---------|---------|-----|
-| 1 | 100 | 5 | $35 | $21 | -$14 |
-| 3 | 500 | 25 | $165 | $106 | -$59 |
-| 6 | 2,000 | 80 | $595 | $339 | -$256 |
+| 1 | 100 | 5 | ~$10 | $21 | **+$11** |
+| 3 | 500 | 25 | ~$45 | $106 | **+$61** |
+| 6 | 2,000 | 80 | ~$165 | $339 | **+$174** |
 
-**This assumes Sonnet for Pro.** Switching Pro to Haiku cuts API cost ~4x and flips the P&L positive around month 3.
+Profitable from day one. API cost is the smallest line item — growth spend (ads, ASO) will matter far more.

@@ -41,24 +41,20 @@ module.exports = async function handler(req, res) {
   }
   if (!body?.messages) return res.status(400).json({ error: 'Missing messages field' });
 
-  // ── Tier-based model selection ─────────────────────────────────────────────
-  // Pro token is a simple shared secret stored in APEX_PRO_SECRET env var.
-  // A real implementation would use signed JWTs verified against Google Play receipts.
+  // ── Tier detection (Pro token = shared secret in APEX_PRO_SECRET env var) ──
   const isPro = body.proToken && body.proToken === process.env.APEX_PRO_SECRET;
 
-  // ── Server-side rate limiting (free tier only) ─────────────────────────────
-  const FREE_DAILY_LIMIT = 5;
-  if (!isPro) {
-    const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
-    pruneOldEntries();
-    if (!checkRateLimit(clientIp, FREE_DAILY_LIMIT)) {
-      return res.status(429).json({ error: 'Daily free limit reached. Upgrade to APEX Pro for unlimited access.' });
-    }
+  // ── Server-side rate limiting ──────────────────────────────────────────────
+  const dailyLimit = isPro ? 50 : 5;
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || 'unknown';
+  pruneOldEntries();
+  if (!checkRateLimit(clientIp, dailyLimit)) {
+    return res.status(429).json({ error: 'Daily limit reached. Upgrade to APEX Pro for more access.' });
   }
 
-  // ── Model + token config by tier ───────────────────────────────────────────
-  const model = isPro ? 'claude-sonnet-4-20250514' : 'claude-haiku-4-5-20251001';
-  const maxTokens = isPro ? 900 : 600;
+  // ── Model: Haiku for all tiers (fast, cheap, great for structured analysis) ─
+  const model = 'claude-haiku-4-5-20251001';
+  const maxTokens = 700;
 
   // ── Prompt caching on system prompt (saves ~90% on repeated tokens) ────────
   const systemBlock = body.system

@@ -10,9 +10,9 @@ const API_URL = IS_NATIVE
   ? "https://apex-pwa.vercel.app/api/chat"
   : "/api/chat";
 
-// Pro token is read from Vite env var (set VITE_PRO_SECRET in Vercel dashboard).
-// It matches APEX_PRO_SECRET on the server. Not cryptographically strong — see COST_GUIDE.md.
-const PRO_TOKEN = import.meta.env.VITE_PRO_SECRET || "";
+// Matches APEX_PRO_SECRET on the server — unlocks 50 queries/day vs 5 for free.
+// Set this in Vercel env as VITE_APEX_PRO_TOKEN (same value as APEX_PRO_SECRET).
+const PRO_TOKEN = import.meta.env.VITE_APEX_PRO_TOKEN || "";
 
 const FREE_DAILY_LIMIT = 5;
 const PRODUCTS = {
