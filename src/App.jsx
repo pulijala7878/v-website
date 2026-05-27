@@ -1,5 +1,22 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Capacitor } from "@capacitor/core";
+import { Preferences } from "@capacitor/preferences";
+import { SplashScreen } from "@capacitor/splash-screen";
+import { StatusBar, Style } from "@capacitor/status-bar";
 
+// ─── Config ──────────────────────────────────────────────────────────────────
+const IS_NATIVE = Capacitor.isNativePlatform();
+const API_URL = IS_NATIVE
+  ? "https://apex-pwa.vercel.app/api/chat"
+  : "/api/chat";
+
+const FREE_DAILY_LIMIT = 5;
+const PRODUCTS = {
+  monthly: { id: "apex_pro_monthly", price: "$4.99/mo", label: "Monthly Pro" },
+  yearly: { id: "apex_pro_yearly", price: "$29.99/yr", label: "Yearly Pro", badge: "Best Value" },
+};
+
+// ─── AI Prompt ────────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are APEX — an elite AI day trading analyst with deep expertise in technical analysis, market microstructure, and price action. You help day traders make informed decisions with sharp, direct analysis.
 
 When a user asks about a stock, crypto, or asset, provide:
@@ -38,6 +55,49 @@ const SUGGESTED = [
   "How to use VWAP in day trading",
 ];
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function getUsage() {
+  const key = `usage_${todayKey()}`;
+  if (IS_NATIVE) {
+    const { value } = await Preferences.get({ key });
+    return parseInt(value || "0", 10);
+  }
+  return parseInt(localStorage.getItem(key) || "0", 10);
+}
+
+async function incrementUsage() {
+  const key = `usage_${todayKey()}`;
+  const current = await getUsage();
+  const next = current + 1;
+  if (IS_NATIVE) {
+    await Preferences.set({ key, value: String(next) });
+  } else {
+    localStorage.setItem(key, String(next));
+  }
+  return next;
+}
+
+async function getProStatus() {
+  if (IS_NATIVE) {
+    const { value } = await Preferences.get({ key: "is_pro" });
+    return value === "true";
+  }
+  return localStorage.getItem("is_pro") === "true";
+}
+
+async function setProStatus(val) {
+  if (IS_NATIVE) {
+    await Preferences.set({ key: "is_pro", value: String(val) });
+  } else {
+    localStorage.setItem("is_pro", String(val));
+  }
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
 const TypingIndicator = () => (
   <div style={{ display: "flex", gap: "5px", alignItems: "center", padding: "12px 0" }}>
     {[0, 1, 2].map(i => (
@@ -70,21 +130,152 @@ function formatMessage(text) {
   });
 }
 
+// ─── Paywall Modal ─────────────────────────────────────────────────────────────
+function PaywallModal({ onClose, onSubscribe, queriesUsed }) {
+  const [selected, setSelected] = useState("yearly");
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,.85)", backdropFilter: "blur(8px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ background: "#0d1117", border: "1px solid rgba(0,255,136,.25)", borderRadius: 20, padding: "28px 24px", maxWidth: 380, width: "100%", position: "relative" }}>
+        <button onClick={onClose} style={{ position: "absolute", top: 14, right: 14, background: "none", border: "none", color: "#546e7a", fontSize: 20, cursor: "pointer", lineHeight: 1 }}>×</button>
+
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>📈</div>
+          <div style={{ fontFamily: "monospace", fontSize: 22, fontWeight: 700, color: "#fff", letterSpacing: "0.1em" }}>
+            APEX <span style={{ background: "linear-gradient(90deg,#00ff88,#00b4ff)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>PRO</span>
+          </div>
+          <p style={{ color: "#546e7a", fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
+            You've used your {FREE_DAILY_LIMIT} free analyses today.<br />Upgrade for unlimited access.
+          </p>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          {["monthly", "yearly"].map(key => {
+            const p = PRODUCTS[key];
+            const isSelected = selected === key;
+            return (
+              <div key={key} onClick={() => setSelected(key)} style={{ border: `1px solid ${isSelected ? "#00ff88" : "rgba(255,255,255,.1)"}`, borderRadius: 12, padding: "14px 16px", marginBottom: 10, cursor: "pointer", background: isSelected ? "rgba(0,255,136,.06)" : "transparent", display: "flex", justifyContent: "space-between", alignItems: "center", transition: "all .2s" }}>
+                <div>
+                  <div style={{ color: "#e0e0e0", fontWeight: 600, fontSize: 14 }}>{p.label}</div>
+                  {p.badge && <div style={{ background: "linear-gradient(90deg,#00ff88,#00b4ff)", borderRadius: 4, padding: "2px 6px", fontSize: 10, color: "#080c10", fontWeight: 700, display: "inline-block", marginTop: 4 }}>{p.badge}</div>}
+                </div>
+                <div style={{ fontFamily: "monospace", color: isSelected ? "#00ff88" : "#78909c", fontSize: 16, fontWeight: 700 }}>{p.price}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          {["Unlimited AI trade analyses", "Real-time setup alerts", "Portfolio watchlist (coming soon)", "Cancel anytime"].map((f, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+              <span style={{ color: "#00ff88", fontSize: 14 }}>✓</span>
+              <span style={{ color: "#b0bec5", fontSize: 13 }}>{f}</span>
+            </div>
+          ))}
+        </div>
+
+        <button onClick={() => onSubscribe(selected)} style={{ width: "100%", padding: "15px", borderRadius: 12, background: "linear-gradient(135deg,#00ff88,#00c97a)", border: "none", color: "#080c10", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "monospace", letterSpacing: "0.05em" }}>
+          UNLOCK PRO
+        </button>
+        <p style={{ textAlign: "center", color: "#263238", fontSize: 10, marginTop: 10, fontFamily: "monospace" }}>
+          Billed via Google Play · Secure payment
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Usage Bar ─────────────────────────────────────────────────────────────────
+function UsageBadge({ used, isPro, onUpgrade }) {
+  if (isPro) return (
+    <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 20, background: "rgba(0,255,136,.1)", border: "1px solid rgba(0,255,136,.3)" }}>
+      <span style={{ color: "#00ff88", fontSize: 11, fontFamily: "monospace", fontWeight: 700, letterSpacing: "0.1em" }}>PRO</span>
+    </div>
+  );
+  const remaining = Math.max(0, FREE_DAILY_LIMIT - used);
+  return (
+    <button onClick={onUpgrade} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 20, background: remaining === 0 ? "rgba(255,80,80,.15)" : "rgba(255,255,255,.05)", border: `1px solid ${remaining === 0 ? "rgba(255,80,80,.4)" : "rgba(255,255,255,.1)"}`, cursor: "pointer" }}>
+      <span style={{ color: remaining === 0 ? "#ff5050" : "#78909c", fontSize: 11, fontFamily: "monospace" }}>
+        {remaining === 0 ? "LIMIT REACHED" : `${remaining} FREE LEFT`}
+      </span>
+    </button>
+  );
+}
+
+// ─── Main App ──────────────────────────────────────────────────────────────────
 export default function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
   const [error, setError] = useState(null);
+  const [showPaywall, setShowPaywall] = useState(false);
+  const [isPro, setIsPro] = useState(false);
+  const [queriesUsed, setQueriesUsed] = useState(0);
+  const [appReady, setAppReady] = useState(false);
   const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    async function init() {
+      const [pro, used] = await Promise.all([getProStatus(), getUsage()]);
+      setIsPro(pro);
+      setQueriesUsed(used);
+      setAppReady(true);
+      if (IS_NATIVE) {
+        await StatusBar.setStyle({ style: Style.Dark });
+        await StatusBar.setBackgroundColor({ color: "#080c10" });
+        await SplashScreen.hide();
+
+        // Restore purchases for users who reinstalled / switched device
+        window.onApexProRestored = async (hasPro) => {
+          if (hasPro) {
+            await setProStatus(true);
+            setIsPro(true);
+          }
+          window.onApexProRestored = null;
+        };
+        window.ApexBilling?.restorePurchases();
+      }
+    }
+    init();
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  const sendMessage = async (text) => {
+  const handleSubscribe = useCallback(async (plan) => {
+    const productId = PRODUCTS[plan].id;
+    if (IS_NATIVE && window.ApexBilling) {
+      // Register one-time callbacks that the native bridge will invoke
+      window.onApexBillingSuccess = async (id) => {
+        await setProStatus(true);
+        setIsPro(true);
+        setShowPaywall(false);
+        window.onApexBillingSuccess = null;
+      };
+      window.onApexBillingFailed = (code, msg) => {
+        console.warn("Billing failed:", code, msg);
+        window.onApexBillingFailed = null;
+      };
+      window.ApexBilling.subscribe(productId);
+    } else {
+      // Web fallback: unlock immediately (replace with your web payment flow)
+      await setProStatus(true);
+      setIsPro(true);
+      setShowPaywall(false);
+    }
+  }, []);
+
+  const sendMessage = useCallback(async (text) => {
     const userText = text || input.trim();
     if (!userText || loading) return;
+
+    const used = await getUsage();
+    if (!isPro && used >= FREE_DAILY_LIMIT) {
+      setShowPaywall(true);
+      return;
+    }
+
     setInput("");
     setShowWelcome(false);
     setError(null);
@@ -92,9 +283,11 @@ export default function App() {
     setMessages(newMessages);
     setLoading(true);
 
+    const nextUsed = await incrementUsage();
+    setQueriesUsed(nextUsed);
+
     try {
-      // Calls our Vercel serverless proxy at /api/chat — no CORS issues!
-      const response = await fetch("/api/chat", {
+      const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -106,11 +299,7 @@ export default function App() {
       });
 
       const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error?.message || data.error || `API error ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(data.error?.message || data.error || `API error ${response.status}`);
       const reply = data.content?.map(b => b.text || "").join("\n") || "No response received.";
       setMessages([...newMessages, { role: "assistant", content: reply }]);
     } catch (err) {
@@ -119,7 +308,9 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [input, loading, messages, isPro]);
+
+  if (!appReady) return null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#080c10", display: "flex", flexDirection: "column", fontFamily: "'Segoe UI', sans-serif", position: "relative" }}>
@@ -139,7 +330,7 @@ export default function App() {
       <div style={{ position: "fixed", inset: 0, backgroundImage: "linear-gradient(rgba(0,255,136,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(0,255,136,.03) 1px,transparent 1px)", backgroundSize: "40px 40px", pointerEvents: "none" }} />
 
       {/* Header */}
-      <header style={{ position: "sticky", top: 0, zIndex: 10, background: "rgba(8,12,16,.97)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(0,255,136,.15)", padding: "0 20px", height: "60px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <header style={{ position: "sticky", top: 0, zIndex: 10, background: "rgba(8,12,16,.97)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(0,255,136,.15)", padding: "0 16px", height: "60px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <div style={{ width: 36, height: 36, borderRadius: 8, background: "linear-gradient(135deg,#00ff88,#00b4ff)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>📈</div>
           <div>
@@ -147,9 +338,12 @@ export default function App() {
             <div style={{ fontFamily: "monospace", fontSize: "9px", color: "#00ff88", letterSpacing: "0.2em" }}>TRADING INTELLIGENCE</div>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#00ff88", boxShadow: "0 0 8px #00ff88", animation: "blink 1.5s ease-in-out infinite" }} />
-          <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#00ff88", letterSpacing: "0.15em" }}>LIVE</span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <UsageBadge used={queriesUsed} isPro={isPro} onUpgrade={() => setShowPaywall(true)} />
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#00ff88", boxShadow: "0 0 8px #00ff88", animation: "blink 1.5s ease-in-out infinite" }} />
+            <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#00ff88", letterSpacing: "0.15em" }}>LIVE</span>
+          </div>
         </div>
       </header>
 
@@ -163,6 +357,14 @@ export default function App() {
           <p style={{ color: "#546e7a", textAlign: "center", fontSize: 14, maxWidth: 380, lineHeight: 1.6, marginBottom: 36 }}>
             Technical analysis, trade setups, support/resistance levels and market insights — powered by AI.
           </p>
+          {!isPro && (
+            <div style={{ marginBottom: 24, textAlign: "center" }}>
+              <span style={{ fontFamily: "monospace", fontSize: 12, color: "#546e7a" }}>
+                {Math.max(0, FREE_DAILY_LIMIT - queriesUsed)} free analyses remaining today ·{" "}
+              </span>
+              <button onClick={() => setShowPaywall(true)} style={{ background: "none", border: "none", color: "#00ff88", fontSize: 12, cursor: "pointer", fontFamily: "monospace", textDecoration: "underline" }}>Go Pro for unlimited</button>
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 10, width: "100%", maxWidth: 680 }}>
             {SUGGESTED.map((q, i) => (
               <button key={i} className="chip" onClick={() => sendMessage(q)} style={{ background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 10, padding: "13px 16px", color: "#78909c", fontSize: 13, cursor: "pointer", textAlign: "left", lineHeight: 1.4, transition: "all .2s" }}>{q}</button>
@@ -216,6 +418,15 @@ export default function App() {
         </div>
         {!showWelcome && <div style={{ textAlign: "center", marginTop: 6, color: "#1c313a", fontSize: 10, fontFamily: "monospace", letterSpacing: 1 }}>NOT FINANCIAL ADVICE · INFORMATIONAL USE ONLY</div>}
       </div>
+
+      {/* Paywall */}
+      {showPaywall && (
+        <PaywallModal
+          queriesUsed={queriesUsed}
+          onClose={() => setShowPaywall(false)}
+          onSubscribe={handleSubscribe}
+        />
+      )}
     </div>
   );
 }
