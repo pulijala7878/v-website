@@ -10,6 +10,10 @@ const API_URL = IS_NATIVE
   ? "https://apex-pwa.vercel.app/api/chat"
   : "/api/chat";
 
+// Pro token is read from Vite env var (set VITE_PRO_SECRET in Vercel dashboard).
+// It matches APEX_PRO_SECRET on the server. Not cryptographically strong — see COST_GUIDE.md.
+const PRO_TOKEN = import.meta.env.VITE_PRO_SECRET || "";
+
 const FREE_DAILY_LIMIT = 5;
 const PRODUCTS = {
   monthly: { id: "apex_pro_monthly", price: "$4.99/mo", label: "Monthly Pro" },
@@ -291,10 +295,9 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
           system: SYSTEM_PROMPT,
           messages: newMessages,
+          ...(isPro && PRO_TOKEN ? { proToken: PRO_TOKEN } : {}),
         }),
       });
 
