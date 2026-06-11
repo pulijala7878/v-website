@@ -63,6 +63,11 @@ export class QuestradeClient {
     return data.orders || [];
   }
 
+  async cancelOrder(accountNumber, orderId) {
+    logger.info("questrade", `Cancelling order ${orderId}`);
+    return this._request(`v1/accounts/${accountNumber}/orders/${orderId}`, { method: "DELETE" });
+  }
+
   /** Resolve a ticker symbol (e.g. "AAPL") to Questrade's internal numeric symbolId. */
   async getSymbolId(ticker) {
     if (this._symbolIdCache.has(ticker)) return this._symbolIdCache.get(ticker);

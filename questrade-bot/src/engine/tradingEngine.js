@@ -3,8 +3,10 @@ import { QuestradeClient } from "../questrade/client.js";
 import { generateTechnicalSignal } from "../strategy/signalEngine.js";
 import { reviewSignal } from "../strategy/claudeReview.js";
 import { RiskManager } from "../risk/riskManager.js";
+import { PositionTracker } from "../risk/positionTracker.js";
 import { logger } from "./logger.js";
 import { isMarketOpen } from "./marketHours.js";
+import { ExitManager } from "./exitManager.js";
 
 const INTERVAL_MS_LOOKUP = {
   OneMinute: 60_000,
@@ -23,6 +25,8 @@ export class TradingEngine {
   constructor() {
     this.client = new QuestradeClient();
     this.risk = new RiskManager();
+    this.tracker = new PositionTracker();
+    this.exitManager = new ExitManager(this.client, this.tracker);
     this.account = null;
   }
 
@@ -49,13 +53,16 @@ export class TradingEngine {
     const combined = balances.combinedBalances?.[0] || balances.perCurrencyBalances?.[0];
     const equity = combined?.totalEquity ?? combined?.cash ?? 0;
 
+    const positions = await this.client.getPositions(this.account.number);
+
+    // Manage exits for existing positions even if new entries get halted below.
+    await this.exitManager.checkExits(this.account.number, positions);
+
     const breaker = this.risk.checkCircuitBreakers(equity);
     if (breaker.halted) {
-      logger.warn("engine", `Trading halted: ${breaker.reason}`);
+      logger.warn("engine", `New entries halted: ${breaker.reason}`);
       return;
     }
-
-    const positions = await this.client.getPositions(this.account.number);
 
     for (const symbol of config.strategy.watchlist) {
       try {
@@ -88,15 +95,17 @@ export class TradingEngine {
 
     const existingPosition = positions.find((p) => p.symbol === symbol);
 
-    // Don't open a new position in the same direction we're already in.
-    if (existingPosition) {
+    // Don't open a new position if we already hold one or are tracking one
+    // (paper-mode trades won't show up in broker positions).
+    if (existingPosition || this.tracker.has(symbol)) {
       logger.info("engine", `${symbol}: already have a position, skipping new entry`, {
-        openQty: existingPosition.openQuantity,
+        openQty: existingPosition?.openQuantity,
       });
       return;
     }
 
-    if (!this.risk.canOpenNewPosition(positions.length)) {
+    const openCount = new Set([...positions.map((p) => p.symbol), ...this.tracker.list().map((p) => p.symbol)]).size;
+    if (!this.risk.canOpenNewPosition(openCount)) {
       logger.info("engine", `${symbol}: max open positions reached, skipping`);
       return;
     }
@@ -165,9 +174,21 @@ export class TradingEngine {
       mode: config.trading.mode,
     };
 
+    const positionRecord = {
+      symbolId,
+      action: technical.action,
+      entryPrice: technical.indicators.price,
+      quantity: sizing.quantity,
+      stopLoss: sizing.stopLoss,
+      takeProfit: sizing.takeProfit,
+      stopOrderId: null,
+      openedAt: new Date().toISOString(),
+    };
+
     if (!isLiveTradingEnabled()) {
       logger.trade({ ...tradeRecord, status: "SIMULATED (paper mode)" });
       this.risk.recordTrade();
+      this.tracker.add(symbol, positionRecord);
       return;
     }
 
@@ -175,10 +196,40 @@ export class TradingEngine {
       const result = await this.client.placeOrder(this.account.number, order);
       logger.trade({ ...tradeRecord, status: "SUBMITTED", orderResponse: result });
       this.risk.recordTrade();
-      // NOTE: stop loss / take profit are not bracket orders here - they are
-      // tracked targets the engine should monitor and act on in subsequent
-      // loop iterations (e.g. by placing a closing order when price crosses
-      // sizing.stopLoss / sizing.takeProfit).
+
+      // Place a protective stop order at the broker as a failsafe in case
+      // the bot goes offline. Take-profit exits are managed by ExitManager
+      // via polling, since Questrade has no native bracket/OCO order type.
+      try {
+        const stopOrder = {
+          accountId: this.account.number,
+          symbolId,
+          quantity: sizing.quantity,
+          icebergQuantity: 0,
+          limitPrice: null,
+          isAllOrNone: false,
+          isAnonymous: false,
+          orderType: "Stop",
+          timeInForce: "GoodTillCanceled",
+          action: technical.action === "BUY" ? "Sell" : "Buy",
+          primaryRoute: "AUTO",
+          secondaryRoute: "AUTO",
+          orderClass: "Primary",
+          stopPrice: sizing.stopLoss,
+        };
+        const stopResult = await this.client.placeOrder(this.account.number, stopOrder);
+        positionRecord.stopOrderId = stopResult.orders?.[0]?.id ?? null;
+        logger.info("engine", `${symbol}: protective stop order placed`, {
+          stopOrderId: positionRecord.stopOrderId,
+          stopPrice: sizing.stopLoss,
+        });
+      } catch (err) {
+        logger.error("engine", `${symbol}: failed to place protective stop order - position is UNPROTECTED`, {
+          error: err.message,
+        });
+      }
+
+      this.tracker.add(symbol, positionRecord);
     } catch (err) {
       logger.error("engine", `${symbol}: order placement failed`, { error: err.message });
     }

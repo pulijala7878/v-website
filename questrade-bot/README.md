@@ -35,6 +35,11 @@ Risk manager (ATR-based stop/target, position sizing, daily loss & trade-count l
         │
         ▼
 Questrade order placement (or simulated log entry in paper mode)
+        │
+        ▼
+Position tracker + exit manager (every loop tick: monitors open positions
+against stop-loss/take-profit, places protective stop order at entry,
+closes positions when targets are hit)
 ```
 
 Every decision (HOLD, rejected signals, executed/simulated trades) is
@@ -109,13 +114,36 @@ Strongly recommended before going live:
 - Start with a small `MAX_RISK_PER_TRADE_PCT` (e.g. 0.25-0.5%).
 - Monitor the bot continuously during your first live sessions.
 
+## Exit management (stop-loss / take-profit)
+
+Questrade's API has no native bracket/OCO order type, so exits are managed
+by the bot itself, persisted in `data/positions.json`:
+
+- **On entry (live mode):** in addition to the market entry order, the bot
+  places a real **protective Stop order** (`GoodTillCanceled`) at the
+  ATR-based stop-loss price. This acts as a broker-side failsafe if the bot
+  goes offline.
+- **Every loop tick:** for each tracked position, the bot fetches the
+  latest quote and checks it against the stop-loss and take-profit levels
+  *before* evaluating any new entries (so exits are managed even if the
+  daily loss circuit breaker has halted new trades).
+  - If **take-profit** is hit: cancels the protective stop order and sends
+    a market order to close the position.
+  - If **stop-loss** is hit (e.g. a gap past the stop price): closes the
+    position the same way.
+  - If a tracked position **disappears from the broker's position list**
+    (the protective stop order itself filled), it's reconciled and removed
+    from tracking automatically.
+- **Paper mode:** the same logic runs against simulated positions, logging
+  `EXIT` records to `data/trades.jsonl` with `status: "SIMULATED (paper mode)"`.
+
+Because exits are polling-based (`POLL_INTERVAL_MS`), take-profit exits can
+experience slippage between the target price and the actual fill price -
+shorter poll intervals reduce this. The protective stop order, however, is
+a real resting order at the broker and isn't subject to polling delay.
+
 ## Notes / limitations
 
-- Stop-loss and take-profit levels are computed (ATR-based) and logged,
-  but orders are currently placed as simple market orders - the engine
-  does not yet place bracket/stop orders or manage exits. You should add
-  exit-management logic (or manage exits manually) before relying on this
-  for unattended live trading.
 - The market-hours check is calendar-based only (Mon-Fri, configured
   hours) and does not account for market holidays.
 - Questrade access tokens expire roughly every 30 minutes and refresh
