@@ -11,7 +11,7 @@ export class QuestradeClient {
     this._symbolIdCache = new Map();
   }
 
-  async _request(pathSuffix, { method = "GET", body } = {}) {
+  async _request(pathSuffix, { method = "GET", body } = {}, _retried = false) {
     const { accessToken, apiServer } = await this.auth.getAccessToken();
     const url = `${apiServer}${pathSuffix}`;
 
@@ -26,6 +26,16 @@ export class QuestradeClient {
 
     if (!res.ok) {
       const errBody = await res.text();
+      // Questrade can invalidate an access token before its local expiry
+      // (e.g. after a portal login). On the first 401, force a fresh token
+      // using the refresh token and retry once before giving up.
+      if (res.status === 401 && !_retried) {
+        logger.warn("questrade", "Access token rejected (401); forcing refresh and retrying", {
+          path: pathSuffix,
+        });
+        await this.auth.forceRefresh();
+        return this._request(pathSuffix, { method, body }, true);
+      }
       throw new Error(`Questrade API ${method} ${pathSuffix} failed (${res.status}): ${errBody}`);
     }
     return res.json();

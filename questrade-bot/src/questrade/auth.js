@@ -54,6 +54,23 @@ export class QuestradeAuth {
     return { accessToken: this.tokens.access_token, apiServer: this.tokens.api_server };
   }
 
+  /**
+   * Force a token refresh regardless of local expiry. Used when Questrade
+   * rejects an access token early (e.g. it was invalidated by a portal
+   * login), which the local expiry clock cannot predict.
+   */
+  async forceRefresh() {
+    if (!this.tokens) this.loadFromDisk();
+    const refreshToken = this.tokens?.refresh_token || config.questrade.refreshToken;
+    if (!refreshToken) {
+      throw new Error(
+        "No Questrade refresh token available. Set QUESTRADE_REFRESH_TOKEN in .env."
+      );
+    }
+    await this.refresh(refreshToken);
+    return { accessToken: this.tokens.access_token, apiServer: this.tokens.api_server };
+  }
+
   async refresh(refreshToken) {
     const url = `${config.questrade.authUrl}?grant_type=refresh_token&refresh_token=${encodeURIComponent(
       refreshToken
