@@ -68,16 +68,6 @@ export class QuestradeClient {
     return data.positions || [];
   }
 
-  async getOrders(accountNumber, stateFilter = "Open") {
-    const data = await this._request(`v1/accounts/${accountNumber}/orders?stateFilter=${stateFilter}`);
-    return data.orders || [];
-  }
-
-  async cancelOrder(accountNumber, orderId) {
-    logger.info("questrade", `Cancelling order ${orderId}`);
-    return this._request(`v1/accounts/${accountNumber}/orders/${orderId}`, { method: "DELETE" });
-  }
-
   /** Resolve a ticker symbol (e.g. "AAPL") to Questrade's internal numeric symbolId. */
   async getSymbolId(ticker) {
     if (this._symbolIdCache.has(ticker)) return this._symbolIdCache.get(ticker);
@@ -109,17 +99,5 @@ export class QuestradeClient {
     });
     const data = await this._request(`v1/markets/candles/${symbolId}?${params.toString()}`);
     return data.candles || [];
-  }
-
-  /**
-   * Place an order. Caller is responsible for building a valid Questrade
-   * order object (accountId, symbolId, quantity, action, orderType, timeInForce, ...).
-   */
-  async placeOrder(accountNumber, order) {
-    logger.info("questrade", "Placing order", order);
-    return this._request(`v1/accounts/${accountNumber}/orders`, {
-      method: "POST",
-      body: order,
-    });
   }
 }

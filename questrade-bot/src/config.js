@@ -13,8 +13,19 @@ export const config = {
   },
 
   trading: {
-    mode: (process.env.TRADING_MODE || "paper").toLowerCase(), // "paper" | "live"
-    liveConfirm: process.env.LIVE_TRADING_CONFIRM || "",
+    // "paper"  -> simulate everything, log only, no alerts sent
+    // "alert"  -> send real entry/exit alerts (Telegram), reconcile against
+    //             broker positions since the bot cannot place orders itself
+    //             (Questrade restricts order placement to partner apps)
+    mode: (process.env.TRADING_MODE || "paper").toLowerCase(),
+  },
+
+  notify: {
+    telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
+    telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
+    // How long an entry alert can remain unconfirmed (not yet seen in broker
+    // positions) before the bot gives up on it and allows a fresh signal.
+    suggestionExpiryMinutes: num(process.env.SUGGESTION_EXPIRY_MINUTES, 30),
   },
 
   claude: {
@@ -48,9 +59,6 @@ export const config = {
   },
 };
 
-export function isLiveTradingEnabled() {
-  return (
-    config.trading.mode === "live" &&
-    config.trading.liveConfirm === "I_UNDERSTAND_THE_RISK"
-  );
+export function isAlertMode() {
+  return config.trading.mode === "alert";
 }

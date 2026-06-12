@@ -1,21 +1,20 @@
-import { config, isLiveTradingEnabled } from "./config.js";
+import { config, isAlertMode } from "./config.js";
 import { TradingEngine } from "./engine/tradingEngine.js";
 import { logger } from "./engine/logger.js";
 
 async function main() {
   logger.info("startup", "Questrade trading bot starting", {
     mode: config.trading.mode,
-    liveEnabled: isLiveTradingEnabled(),
     watchlist: config.strategy.watchlist,
     interval: config.strategy.candleInterval,
     pollIntervalMs: config.strategy.pollIntervalMs,
   });
 
-  if (config.trading.mode === "live" && !isLiveTradingEnabled()) {
+  if (isAlertMode() && (!config.notify.telegramBotToken || !config.notify.telegramChatId)) {
     logger.warn(
       "startup",
-      "TRADING_MODE=live but LIVE_TRADING_CONFIRM is not set to 'I_UNDERSTAND_THE_RISK'. " +
-        "Running in PAPER mode (no real orders will be placed)."
+      "TRADING_MODE=alert but TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID are not set. " +
+        "Alerts will only be written to the log."
     );
   }
 

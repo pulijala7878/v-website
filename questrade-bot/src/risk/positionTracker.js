@@ -13,8 +13,13 @@ const POSITIONS_FILE = path.join(__dirname, "../../data/positions.json");
  * Keyed by symbol. Shape per entry:
  * {
  *   symbolId, action: "BUY"|"SELL", entryPrice, quantity,
- *   stopLoss, takeProfit, stopOrderId, openedAt
+ *   stopLoss, takeProfit, openedAt,
+ *   status: "OPEN" | "SUGGESTED" | "EXIT_SUGGESTED"
  * }
+ *
+ * In "alert" mode, the bot can't place orders itself, so "SUGGESTED" /
+ * "EXIT_SUGGESTED" represent alerts sent to the trader that haven't yet
+ * been confirmed against the broker's actual positions.
  */
 export class PositionTracker {
   constructor() {
@@ -38,6 +43,12 @@ export class PositionTracker {
 
   add(symbol, record) {
     this.positions[symbol] = record;
+    this.save();
+  }
+
+  update(symbol, patch) {
+    if (!this.positions[symbol]) return;
+    this.positions[symbol] = { ...this.positions[symbol], ...patch };
     this.save();
   }
 

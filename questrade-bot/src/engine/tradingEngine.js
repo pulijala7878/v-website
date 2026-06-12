@@ -1,4 +1,4 @@
-import { config, isLiveTradingEnabled } from "../config.js";
+import { config, isAlertMode } from "../config.js";
 import { QuestradeClient } from "../questrade/client.js";
 import { generateTechnicalSignal } from "../strategy/signalEngine.js";
 import { reviewSignal } from "../strategy/claudeReview.js";
@@ -7,6 +7,7 @@ import { PositionTracker } from "../risk/positionTracker.js";
 import { logger } from "./logger.js";
 import { isMarketOpen } from "./marketHours.js";
 import { ExitManager } from "./exitManager.js";
+import { sendAlert, formatEntryAlert } from "../notify/notifier.js";
 
 const INTERVAL_MS_LOOKUP = {
   OneMinute: 60_000,
@@ -33,14 +34,7 @@ export class TradingEngine {
   async init() {
     this.account = await this.client.getActiveAccount(config.questrade.accountNumber || undefined);
     logger.info("engine", `Using Questrade account ${this.account.number} (${this.account.type})`);
-    logger.info(
-      "engine",
-      `Trading mode: ${config.trading.mode.toUpperCase()}${
-        config.trading.mode === "live" && !isLiveTradingEnabled()
-          ? " (LIVE requested but LIVE_TRADING_CONFIRM not set - running as paper)"
-          : ""
-      }`
-    );
+    logger.info("engine", `Trading mode: ${config.trading.mode.toUpperCase()}`);
   }
 
   async runOnce() {
@@ -53,10 +47,19 @@ export class TradingEngine {
     const combined = balances.combinedBalances?.[0] || balances.perCurrencyBalances?.[0];
     const equity = combined?.totalEquity ?? combined?.cash ?? 0;
 
+    if (!(equity > 0)) {
+      logger.warn("engine", "Account equity is 0 or unavailable - skipping this cycle", { balances });
+      return;
+    }
+
     const positions = await this.client.getPositions(this.account.number);
 
+    // Reconcile suggested entries/exits against the trader's actual broker
+    // positions before managing exits or evaluating new signals.
+    this.reconcileTracker(positions);
+
     // Manage exits for existing positions even if new entries get halted below.
-    await this.exitManager.checkExits(this.account.number, positions);
+    await this.exitManager.checkExits();
 
     const breaker = this.risk.checkCircuitBreakers(equity);
     if (breaker.halted) {
@@ -69,6 +72,46 @@ export class TradingEngine {
         await this.evaluateSymbol(symbol, { equity, positions });
       } catch (err) {
         logger.error("engine", `Error evaluating ${symbol}`, { error: err.message });
+      }
+    }
+  }
+
+  /**
+   * Confirms SUGGESTED entries / EXIT_SUGGESTED exits against the broker's
+   * actual position list, since the bot can't place orders itself - the
+   * trader acts on alerts manually.
+   */
+  reconcileTracker(brokerPositions) {
+    const brokerSymbols = new Map(brokerPositions.map((p) => [p.symbol, p]));
+    const expiryMs = config.notify.suggestionExpiryMinutes * 60_000;
+
+    for (const tracked of this.tracker.list()) {
+      const broker = brokerSymbols.get(tracked.symbol);
+
+      if (tracked.status === "SUGGESTED") {
+        if (broker) {
+          this.tracker.update(tracked.symbol, {
+            status: "OPEN",
+            entryPrice: broker.averageEntryPrice ?? tracked.entryPrice,
+            quantity: broker.openQuantity ?? tracked.quantity,
+          });
+          logger.info("engine", `${tracked.symbol}: entry confirmed from broker positions`);
+        } else if (Date.now() - new Date(tracked.suggestedAt).getTime() > expiryMs) {
+          logger.info("engine", `${tracked.symbol}: entry suggestion expired unconfirmed, removing`);
+          this.tracker.remove(tracked.symbol);
+        }
+        continue;
+      }
+
+      if (tracked.status === "EXIT_SUGGESTED" && !broker) {
+        logger.trade({
+          action: "EXIT_CONFIRMED",
+          symbol: tracked.symbol,
+          reason: tracked.exitReason,
+          entryPrice: tracked.entryPrice,
+          quantity: tracked.quantity,
+        });
+        this.tracker.remove(tracked.symbol);
       }
     }
   }
@@ -95,8 +138,8 @@ export class TradingEngine {
 
     const existingPosition = positions.find((p) => p.symbol === symbol);
 
-    // Don't open a new position if we already hold one or are tracking one
-    // (paper-mode trades won't show up in broker positions).
+    // Don't suggest a new entry if we already hold one or have a pending
+    // suggestion for this symbol.
     if (existingPosition || this.tracker.has(symbol)) {
       logger.info("engine", `${symbol}: already have a position, skipping new entry`, {
         openQty: existingPosition?.openQuantity,
@@ -142,27 +185,15 @@ export class TradingEngine {
       return;
     }
 
-    await this.executeTrade(symbol, symbolId, technical, sizing);
+    await this.suggestEntry(symbol, symbolId, technical, sizing, review);
   }
 
-  async executeTrade(symbol, symbolId, technical, sizing) {
-    const order = {
-      accountId: this.account.number,
-      symbolId,
-      quantity: sizing.quantity,
-      icebergQuantity: 0,
-      limitPrice: null,
-      isAllOrNone: false,
-      isAnonymous: false,
-      orderType: "Market",
-      timeInForce: "Day",
-      action: technical.action === "BUY" ? "Buy" : "Sell",
-      primaryRoute: "AUTO",
-      secondaryRoute: "AUTO",
-      orderClass: "Primary",
-      stopPrice: null,
-    };
-
+  /**
+   * Records a candidate entry. In "alert" mode, sends a notification for the
+   * trader to act on manually (the bot cannot place orders on Questrade).
+   * In "paper" mode, simulates the entry as immediately filled.
+   */
+  async suggestEntry(symbol, symbolId, technical, sizing, review) {
     const tradeRecord = {
       action: technical.action,
       symbol,
@@ -181,57 +212,18 @@ export class TradingEngine {
       quantity: sizing.quantity,
       stopLoss: sizing.stopLoss,
       takeProfit: sizing.takeProfit,
-      stopOrderId: null,
       openedAt: new Date().toISOString(),
     };
 
-    if (!isLiveTradingEnabled()) {
+    if (isAlertMode()) {
+      await sendAlert(formatEntryAlert({ symbol, technical, sizing, review }));
+      logger.trade({ ...tradeRecord, status: "ALERT_SENT" });
+      this.tracker.add(symbol, { ...positionRecord, status: "SUGGESTED", suggestedAt: new Date().toISOString() });
+    } else {
       logger.trade({ ...tradeRecord, status: "SIMULATED (paper mode)" });
-      this.risk.recordTrade();
-      this.tracker.add(symbol, positionRecord);
-      return;
+      this.tracker.add(symbol, { ...positionRecord, status: "OPEN" });
     }
 
-    try {
-      const result = await this.client.placeOrder(this.account.number, order);
-      logger.trade({ ...tradeRecord, status: "SUBMITTED", orderResponse: result });
-      this.risk.recordTrade();
-
-      // Place a protective stop order at the broker as a failsafe in case
-      // the bot goes offline. Take-profit exits are managed by ExitManager
-      // via polling, since Questrade has no native bracket/OCO order type.
-      try {
-        const stopOrder = {
-          accountId: this.account.number,
-          symbolId,
-          quantity: sizing.quantity,
-          icebergQuantity: 0,
-          limitPrice: null,
-          isAllOrNone: false,
-          isAnonymous: false,
-          orderType: "Stop",
-          timeInForce: "GoodTillCanceled",
-          action: technical.action === "BUY" ? "Sell" : "Buy",
-          primaryRoute: "AUTO",
-          secondaryRoute: "AUTO",
-          orderClass: "Primary",
-          stopPrice: sizing.stopLoss,
-        };
-        const stopResult = await this.client.placeOrder(this.account.number, stopOrder);
-        positionRecord.stopOrderId = stopResult.orders?.[0]?.id ?? null;
-        logger.info("engine", `${symbol}: protective stop order placed`, {
-          stopOrderId: positionRecord.stopOrderId,
-          stopPrice: sizing.stopLoss,
-        });
-      } catch (err) {
-        logger.error("engine", `${symbol}: failed to place protective stop order - position is UNPROTECTED`, {
-          error: err.message,
-        });
-      }
-
-      this.tracker.add(symbol, positionRecord);
-    } catch (err) {
-      logger.error("engine", `${symbol}: order placement failed`, { error: err.message });
-    }
+    this.risk.recordTrade();
   }
 }
